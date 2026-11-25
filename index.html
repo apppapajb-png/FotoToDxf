@@ -86,7 +86,12 @@
     <div class="card">
       <h2>4 Ecken des A4‑Blatts antippen</h2>
       <div class="stage"><canvas id="cv-pick"></canvas></div>
-      <div class="status" id="pick-status">Tippe nacheinander die 4 Ecken des Referenzblatts an (im Uhrzeigersinn).</div>
+      <div class="row" style="justify-content:center;gap:8px;margin-top:8px">
+        <button class="ghost" id="zoom-out" type="button" style="min-width:54px;font-size:20px">−</button>
+        <button class="ghost" id="zoom-fit" type="button" style="min-width:104px">Ganzes Bild</button>
+        <button class="ghost" id="zoom-in" type="button" style="min-width:54px;font-size:20px">+</button>
+      </div>
+      <div class="status" id="pick-status">Ecke antippen und mit dem Finger genau schieben – die Lupe hilft. Zwei Finger = zoomen.</div>
       <div class="num2" style="margin-top:10px">
         <div><label>A4 Breite mm</label><br><input id="a4w" type="number" value="210"></div>
         <div><label>A4 Höhe mm</label><br><input id="a4h" type="number" value="297"></div>

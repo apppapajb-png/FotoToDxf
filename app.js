@@ -2,7 +2,7 @@
    Nutzt OpenCV.js für Schwelle + Konturen und geom.js für Linien/Bögen + DXF. */
 (function () {
   'use strict';
-  const APP_VER = '0.1';
+  const APP_VER = '0.2';
   const $ = s => document.querySelector(s);
   const G = window.Geom;
   const FP = { tol: 0.2, minr: 1.0, maxr: 5000, smooth: 0.6, minArea: 50 };
@@ -59,54 +59,126 @@
   //  Ecken setzen
   // =========================================================
   const cvp = $('#cv-pick'); const ctxp = cvp.getContext('2d');
-  let pickScale = 1;
+  // großes Bild + Zoom/Pan (zwei Finger) + Lupe am Finger für genaues Setzen
+  const stageEl = cvp.parentElement;
+  const DPR = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+  let view = { scale: 1, ox: 0, oy: 0 };
+  let dragPt = -1, showLoupe = false, loupeAt = null;
+  let gesture = null, pinch = null;
+
+  function sizePickStage() {
+    const cssW = stageEl.clientWidth || (window.innerWidth - 28);
+    const top = stageEl.getBoundingClientRect().top;
+    const cssH = Math.max(280, Math.min(Math.round(window.innerHeight * 0.74), window.innerHeight - top - 150));
+    cvp.style.width = cssW + 'px'; cvp.style.height = cssH + 'px';
+    cvp.width = Math.round(cssW * DPR); cvp.height = Math.round(cssH * DPR);
+  }
+  function fitView() {
+    const cssW = cvp.width / DPR, cssH = cvp.height / DPR;
+    const s = Math.min(cssW / srcImg.width, cssH / srcImg.height);
+    view.scale = s; view.ox = (cssW - srcImg.width * s) / 2; view.oy = (cssH - srcImg.height * s) / 2;
+  }
+  const img2css = p => [p[0] * view.scale + view.ox, p[1] * view.scale + view.oy];
+  const css2img = (x, y) => [(x - view.ox) / view.scale, (y - view.oy) / view.scale];
+  function localXY(t) { const r = cvp.getBoundingClientRect(); return [t.clientX - r.left, t.clientY - r.top]; }
+
   function startCornerPick() {
     show('corners');
-    const maxW = Math.min(window.innerWidth - 28, 740);
-    pickScale = maxW / srcImg.width;
-    cvp.width = srcImg.width; cvp.height = srcImg.height;
-    cvp.style.width = maxW + 'px';
-    drawPick();
-    setStatus($('#pick-status'), 'Tippe nacheinander die 4 Ecken des A4‑Blatts an (im Uhrzeigersinn).');
-    $('#pick-go').disabled = true;
+    view = { scale: 1, ox: 0, oy: 0 };
+    requestAnimationFrame(() => { sizePickStage(); fitView(); drawPick(); });
+    setStatus($('#pick-status'), 'Ecke antippen und mit dem Finger genau schieben – die Lupe zeigt die Stelle. Zwei Finger = zoomen/verschieben.');
+    $('#pick-go').disabled = pickPts.length < 4;
   }
   function drawPick() {
-    ctxp.drawImage(srcImg, 0, 0);
-    ctxp.lineWidth = Math.max(2, srcImg.width / 400);
+    const cssW = cvp.width / DPR, cssH = cvp.height / DPR;
+    ctxp.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctxp.fillStyle = '#1a2533'; ctxp.fillRect(0, 0, cssW, cssH);
+    ctxp.imageSmoothingQuality = 'high';
+    ctxp.drawImage(srcImg, view.ox, view.oy, srcImg.width * view.scale, srcImg.height * view.scale);
     if (pickPts.length > 1) {
-      ctxp.strokeStyle = '#f5a623'; ctxp.beginPath();
-      pickPts.forEach((p, i) => i ? ctxp.lineTo(p[0], p[1]) : ctxp.moveTo(p[0], p[1]));
-      if (pickPts.length === 4) ctxp.closePath();
-      ctxp.stroke();
+      ctxp.strokeStyle = '#f5a623'; ctxp.lineWidth = 2; ctxp.beginPath();
+      pickPts.forEach((p, i) => { const c = img2css(p); i ? ctxp.lineTo(c[0], c[1]) : ctxp.moveTo(c[0], c[1]); });
+      if (pickPts.length === 4) ctxp.closePath(); ctxp.stroke();
     }
     pickPts.forEach((p, i) => {
-      const r = Math.max(8, srcImg.width / 110);
-      ctxp.fillStyle = '#2d6cdf'; ctxp.beginPath(); ctxp.arc(p[0], p[1], r, 0, 7); ctxp.fill();
-      ctxp.fillStyle = '#fff'; ctxp.font = 'bold ' + (r * 1.3) + 'px sans-serif'; ctxp.textAlign = 'center'; ctxp.textBaseline = 'middle';
-      ctxp.fillText(i + 1, p[0], p[1]);
+      const c = img2css(p);
+      ctxp.fillStyle = '#2d6cdf'; ctxp.beginPath(); ctxp.arc(c[0], c[1], 11, 0, 7); ctxp.fill();
+      ctxp.fillStyle = '#fff'; ctxp.font = 'bold 13px sans-serif'; ctxp.textAlign = 'center'; ctxp.textBaseline = 'middle';
+      ctxp.fillText(i + 1, c[0], c[1]);
     });
+    if (showLoupe && loupeAt) drawLoupe(loupeAt);
   }
-  function canvasPt(ev) {
-    const r = cvp.getBoundingClientRect();
-    const t = ev.touches ? ev.touches[0] : ev;
-    return [(t.clientX - r.left) / r.width * cvp.width, (t.clientY - r.top) / r.height * cvp.height];
+  function drawLoupe(imgPt) {
+    const R = 60, mag = 3.4, cssW = cvp.width / DPR, cssH = cvp.height / DPR;
+    const fc = img2css(imgPt);
+    const lx = R + 14, ly = (fc[1] < cssH / 2) ? (cssH - R - 14) : (R + 14);
+    ctxp.save();
+    ctxp.beginPath(); ctxp.arc(lx, ly, R, 0, 7); ctxp.closePath();
+    ctxp.fillStyle = '#1a2533'; ctxp.fill(); ctxp.clip();
+    const sc = view.scale * mag;
+    ctxp.drawImage(srcImg, lx - imgPt[0] * sc, ly - imgPt[1] * sc, srcImg.width * sc, srcImg.height * sc);
+    ctxp.strokeStyle = '#ff3b3b'; ctxp.lineWidth = 1.5;
+    ctxp.beginPath(); ctxp.moveTo(lx - R, ly); ctxp.lineTo(lx + R, ly); ctxp.moveTo(lx, ly - R); ctxp.lineTo(lx, ly + R); ctxp.stroke();
+    ctxp.restore();
+    ctxp.beginPath(); ctxp.arc(lx, ly, R, 0, 7); ctxp.strokeStyle = '#fff'; ctxp.lineWidth = 3; ctxp.stroke();
   }
-  function onPick(ev) {
-    ev.preventDefault();
-    const p = canvasPt(ev);
-    if (pickPts.length < 4) pickPts.push(p);
-    else { // nächsten Punkt verschieben
-      let k = 0, bd = Infinity; pickPts.forEach((q, i) => { const d = Math.hypot(q[0] - p[0], q[1] - p[1]); if (d < bd) { bd = d; k = i; } }); pickPts[k] = p;
-    }
-    drawPick();
+  function updateGo() {
     $('#pick-go').disabled = pickPts.length < 4;
-    setStatus($('#pick-status'), pickPts.length < 4 ? ('Noch ' + (4 - pickPts.length) + ' Ecke(n) antippen …') : 'Alle 4 gesetzt. Punkt daneben? Einfach neu antippen (nächster wird verschoben).');
+    setStatus($('#pick-status'), pickPts.length < 4 ? ('Noch ' + (4 - pickPts.length) + ' Ecke(n) setzen …') : 'Alle 4 gesetzt. Zum Feinjustieren einen Punkt antippen und schieben (Lupe). Dann „Entzerren & erkennen“.');
   }
-  cvp.addEventListener('mousedown', onPick);
-  cvp.addEventListener('touchstart', onPick, { passive: false });
-  $('#pick-reset').onclick = () => { pickPts = []; drawPick(); $('#pick-go').disabled = true; setStatus($('#pick-status'), 'Tippe die 4 Ecken an.'); };
+  function startPoint(xy) {
+    const img = css2img(xy[0], xy[1]);
+    if (pickPts.length < 4) { pickPts.push(img); dragPt = pickPts.length - 1; }
+    else { let k = 0, bd = 1e9; pickPts.forEach((p, i) => { const c = img2css(p); const d = Math.hypot(c[0] - xy[0], c[1] - xy[1]); if (d < bd) { bd = d; k = i; } }); dragPt = k; pickPts[k] = img; }
+    showLoupe = true; loupeAt = pickPts[dragPt]; drawPick(); updateGo();
+  }
+  function movePoint(xy) { if (dragPt < 0) return; const img = css2img(xy[0], xy[1]); pickPts[dragPt] = img; loupeAt = img; drawPick(); }
+  function endPoint() { showLoupe = false; dragPt = -1; drawPick(); updateGo(); }
+
+  function zoomAt(cx, cy, f) {
+    const ip = css2img(cx, cy);
+    view.scale = Math.max(0.05, Math.min(40, view.scale * f));
+    view.ox = cx - ip[0] * view.scale; view.oy = cy - ip[1] * view.scale;
+    drawPick();
+  }
+  // Touch
+  cvp.addEventListener('touchstart', e => {
+    e.preventDefault();
+    if (e.touches.length === 2) {
+      const a = localXY(e.touches[0]), b = localXY(e.touches[1]);
+      gesture = 'pan'; showLoupe = false;
+      pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], scale: view.scale, ox: view.ox, oy: view.oy };
+      drawPick(); return;
+    }
+    gesture = 'point'; startPoint(localXY(e.touches[0]));
+  }, { passive: false });
+  cvp.addEventListener('touchmove', e => {
+    e.preventDefault();
+    if (gesture === 'pan' && e.touches.length === 2 && pinch) {
+      const a = localXY(e.touches[0]), b = localXY(e.touches[1]);
+      const d = Math.hypot(a[0] - b[0], a[1] - b[1]), mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], f = d / pinch.d;
+      view.scale = pinch.scale * f;
+      view.ox = mid[0] - (pinch.mid[0] - pinch.ox) / pinch.scale * view.scale + (mid[0] - pinch.mid[0]);
+      view.oy = mid[1] - (pinch.mid[1] - pinch.oy) / pinch.scale * view.scale + (mid[1] - pinch.mid[1]);
+      drawPick();
+    } else if (gesture === 'point' && e.touches.length === 1) movePoint(localXY(e.touches[0]));
+  }, { passive: false });
+  cvp.addEventListener('touchend', e => { if (gesture === 'point') endPoint(); gesture = null; pinch = null; }, { passive: false });
+  // Maus (PC)
+  let mdown = false;
+  cvp.addEventListener('mousedown', e => { mdown = true; startPoint(localXY(e)); });
+  cvp.addEventListener('mousemove', e => { if (mdown) movePoint(localXY(e)); });
+  window.addEventListener('mouseup', () => { if (mdown) { mdown = false; endPoint(); } });
+  cvp.addEventListener('wheel', e => { e.preventDefault(); const xy = localXY(e); zoomAt(xy[0], xy[1], e.deltaY < 0 ? 1.15 : 1 / 1.15); }, { passive: false });
+
+  $('#zoom-in').onclick = () => zoomAt(cvp.width / DPR / 2, cvp.height / DPR / 2, 1.4);
+  $('#zoom-out').onclick = () => zoomAt(cvp.width / DPR / 2, cvp.height / DPR / 2, 1 / 1.4);
+  $('#zoom-fit').onclick = () => { fitView(); drawPick(); };
+  $('#pick-reset').onclick = () => { pickPts = []; dragPt = -1; showLoupe = false; drawPick(); updateGo(); };
   $('#corners-back').onclick = () => show('start');
   $('#pick-go').onclick = () => waitCv(runPhoto);
+  window.addEventListener('resize', () => { if (!screens.corners.classList.contains('hide') && srcImg) { sizePickStage(); drawPick(); } });
+  window.addEventListener('orientationchange', () => { setTimeout(() => { if (!screens.corners.classList.contains('hide') && srcImg) { sizePickStage(); drawPick(); } }, 300); });
 
   function orderQuad(pts) {
     const sum = pts.map(p => p[0] + p[1]), diff = pts.map(p => p[1] - p[0]);
