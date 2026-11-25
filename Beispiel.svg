@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200mm" height="150mm" viewBox="0 0 200 150">
+  <rect x="10" y="10" width="180" height="130"/>
+  <circle cx="50" cy="60" r="20"/>
+  <g transform="translate(100,40) rotate(15)">
+    <path d="M0,0 C 20,-30 60,-30 80,0 S 140,30 120,60 L 40,60 Q 10,40 0,0 Z"/>
+  </g>
+  <path d="M130,100 A 25,25 0 0 1 180,100 L 180,130 L 130,130 Z"/>
+  <polygon points="20,110 40,100 60,120 30,130"/>
+</svg>

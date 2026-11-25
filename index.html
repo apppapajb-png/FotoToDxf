@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#143a66">
+<title>Foto to DXF</title>
+<style>
+  :root{ --bg:#eef2f7; --head:#143a66; --accent:#f5a623; --blue:#2d6cdf; --green:#1b8a3a; --card:#fff; --line:#d7dee8; --txt:#1a2330; }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--txt);font-family:-apple-system,"Segoe UI",Roboto,sans-serif}
+  header{background:var(--head);color:#fff;padding:12px 16px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:10}
+  header .logo{width:30px;height:30px;border:2px solid #fff;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:15px}
+  header h1{font-size:18px;margin:0;font-weight:700;flex:1}
+  header small{font-size:12px;opacity:.8}
+  main{padding:14px;max-width:760px;margin:0 auto}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px}
+  .big{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  button{font:inherit;border:0;border-radius:12px;padding:14px;cursor:pointer;background:var(--blue);color:#fff;font-weight:600;display:flex;align-items:center;justify-content:center;gap:8px;min-height:52px}
+  button.ghost{background:#fff;color:var(--txt);border:1px solid var(--line)}
+  button.accent{background:var(--accent);color:#2a2000}
+  button.green{background:var(--green)}
+  button:active{filter:brightness(.94)}
+  button:disabled{opacity:.45}
+  .em{font-size:22px}
+  label.file{position:relative;overflow:hidden}
+  label.file input{position:absolute;inset:0;opacity:0;cursor:pointer;font-size:0}
+  .stage{position:relative;width:100%;background:#243244;border-radius:12px;overflow:hidden;touch-action:none}
+  canvas{display:block;width:100%;height:auto}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0}
+  .row label{font-size:14px;color:#44506a}
+  input[type=number],input[type=text]{font:inherit;padding:9px 10px;border:1px solid var(--line);border-radius:9px;width:92px;text-align:center}
+  .hint{font-size:13px;color:#55617a;line-height:1.5}
+  .pill{display:inline-block;background:#eaf0fb;color:#24457f;border-radius:20px;padding:3px 11px;font-size:12px;font-weight:600;margin-right:6px}
+  .status{font-size:13px;color:#33415c;min-height:20px;margin-top:6px}
+  .status.err{color:#b02a2a}
+  h2{font-size:15px;margin:0 0 10px;color:#2a3242}
+  .hide{display:none!important}
+  .center{text-align:center}
+  #qrbox{display:flex;justify-content:center;padding:10px}
+  .foot{font-size:12px;color:#7a869c;text-align:center;padding:16px 8px 30px}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .toolbar button{flex:1;min-width:120px}
+  .num2{display:flex;gap:14px;flex-wrap:wrap}
+  .ov{position:fixed;inset:0;background:rgba(10,18,30,.78);display:flex;align-items:center;justify-content:center;z-index:50;color:#fff;flex-direction:column;gap:14px;text-align:center;padding:24px}
+  .spin{width:42px;height:42px;border:5px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;animation:sp 1s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">▱</div>
+  <h1>Foto&nbsp;to&nbsp;DXF</h1>
+  <small id="ver">v0.1</small>
+</header>
+
+<main>
+  <!-- START -->
+  <section id="screen-start">
+    <div class="card">
+      <h2>Was möchtest du umwandeln?</h2>
+      <div class="big">
+        <label class="file"><button class="accent" type="button"><span class="em">📷</span>Kamera</button>
+          <input id="in-cam" type="file" accept="image/*" capture="environment"></label>
+        <label class="file"><button class="ghost" type="button"><span class="em">🖼️</span>Bild öffnen</button>
+          <input id="in-img" type="file" accept="image/*"></label>
+        <label class="file"><button class="ghost" type="button"><span class="em">◻️</span>SVG öffnen</button>
+          <input id="in-svg" type="file" accept=".svg,image/svg+xml"></label>
+        <button id="btn-qr" class="ghost" type="button"><span class="em">🔗</span>Teilen (QR)</button>
+      </div>
+      <p class="hint" style="margin-top:12px">
+        <b>Foto/Kamera:</b> Lege die Schablone zusammen mit einem <b>DIN‑A4‑Blatt</b> (als Maßstab) ins Bild.
+        Danach tippst du die 4 Ecken des Blatts an – fertig ist die DXF mit echten Linien und Bögen.<br>
+        <b>Alles rechnet auf deinem Gerät</b>, nichts wird hochgeladen.
+      </p>
+    </div>
+    <div class="card hide" id="qr-card">
+      <h2>Diese App teilen</h2>
+      <div id="qrbox"></div>
+      <p class="hint center" id="qr-url"></p>
+    </div>
+  </section>
+
+  <!-- ECKEN SETZEN (Foto) -->
+  <section id="screen-corners" class="hide">
+    <div class="card">
+      <h2>4 Ecken des A4‑Blatts antippen</h2>
+      <div class="stage"><canvas id="cv-pick"></canvas></div>
+      <div class="status" id="pick-status">Tippe nacheinander die 4 Ecken des Referenzblatts an (im Uhrzeigersinn).</div>
+      <div class="num2" style="margin-top:10px">
+        <div><label>A4 Breite mm</label><br><input id="a4w" type="number" value="210"></div>
+        <div><label>A4 Höhe mm</label><br><input id="a4h" type="number" value="297"></div>
+      </div>
+      <div class="toolbar">
+        <button class="ghost" id="pick-reset" type="button">↺ Punkte neu</button>
+        <button class="green" id="pick-go" type="button" disabled>✓ Entzerren & erkennen</button>
+      </div>
+      <p class="hint" style="margin-top:8px">Tipp: ins Bild zoomen (zwei Finger) hilft beim genauen Setzen. Punkt daneben? „Punkte neu“.</p>
+    </div>
+    <button class="ghost" id="corners-back" type="button">‹ Zurück</button>
+  </section>
+
+  <!-- ERGEBNIS -->
+  <section id="screen-result" class="hide">
+    <div class="card">
+      <h2>Ergebnis</h2>
+      <div class="stage"><canvas id="cv-res"></canvas></div>
+      <div class="status" id="res-status"></div>
+      <div class="toolbar">
+        <button class="accent" id="btn-beautify" type="button">✨ Verschönern</button>
+        <button class="green" id="btn-dxf" type="button">💾 DXF speichern</button>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <label><input type="checkbox" id="opt-mirror"> Spiegeln</label>
+      </div>
+    </div>
+    <button class="ghost" id="result-back" type="button">‹ Neu anfangen</button>
+  </section>
+
+  <p class="foot">Foto&nbsp;to&nbsp;DXF · läuft offline im Browser · DXF R12 für Xilog&nbsp;Maestro</p>
+</main>
+
+<div id="overlay" class="ov hide"><div class="spin"></div><div id="ov-text">Bitte warten …</div></div>
+
+<!-- Bibliotheken: OpenCV.js (Bildverarbeitung) + QR-Code -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>window.Module={onRuntimeInitialized(){window.cvReady=true;}};</script>
+<script async src="https://docs.opencv.org/4.10.0/opencv.js" onload="window.cvScriptLoaded=true"></script>
+<script src="geom.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
