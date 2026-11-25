@@ -2,7 +2,7 @@
    Nutzt OpenCV.js für Schwelle + Konturen und geom.js für Linien/Bögen + DXF. */
 (function () {
   'use strict';
-  const APP_VER = '0.3';
+  const APP_VER = '0.3.3';
   const $ = s => document.querySelector(s);
   const G = window.Geom;
   const FP = { tol: 0.2, minr: 1.0, maxr: 5000, smooth: 0.6, minArea: 50 };
@@ -224,7 +224,7 @@
         if (a < 0.01 * Hs * Ws || a > 0.9 * Hs * Ws) { c.delete(); continue; }
         const peri = cv.arcLength(c, true); let quad = null;
         for (const ef of [0.02, 0.03, 0.04, 0.05, 0.07]) {
-          const ap = new cv.Mat(); cv.approxPolyDP(c, ef * peri, true, ap);
+          const ap = new cv.Mat(); cv.approxPolyDP(c, ap, ef * peri, true); // OpenCV.js: (Eingabe, Ausgabe, epsilon, geschlossen)
           if (ap.rows === 4 && cv.isContourConvex(ap)) { quad = []; for (let j = 0; j < 4; j++) quad.push([ap.data32S[2 * j], ap.data32S[2 * j + 1]]); }
           ap.delete(); if (quad) break;
         }
@@ -295,9 +295,12 @@
       for (const p of P) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); }
       const isA4 = Math.abs(x0) < 6 && Math.abs(y0) < 6 && Math.abs(x1 - W) < 6 && Math.abs(y1 - H) < 6;
       if (isA4) continue;
-      const outer = hier.intPtr(0, i)[3] === -1;
-      raw.push({ P, outer });
+      raw.push({ P, outer: true });
     }
+    // Außen/Innen über Verschachtelung bestimmen (nicht über OpenCV-Hierarchie:
+    // dort ist das weiße A4-Blatt die äußere Ebene und die Schablone nur ein „Loch“ darin).
+    const inPoly = (pt, Q) => { let ins = false; for (let a = 0, b = Q.length - 1; a < Q.length; b = a++) { if (((Q[a][1] > pt[1]) !== (Q[b][1] > pt[1])) && (pt[0] < (Q[b][0] - Q[a][0]) * (pt[1] - Q[a][1]) / (Q[b][1] - Q[a][1]) + Q[a][0])) ins = !ins; } return ins; };
+    for (const r of raw) { let depth = 0; for (const o of raw) if (o !== r && inPoly(r.P[0], o.P)) depth++; r.outer = depth % 2 === 0; }
     src.delete(); gray.delete(); bin.delete(); m.delete(); contours.delete(); hier.delete();
     srcTri.delete(); dstTri.delete(); M.delete();
 
@@ -375,14 +378,16 @@
     return [x0, y0, x1, y1];
   }
   function drawResult() {
-    const maxW = Math.min(window.innerWidth - 28, 740);
+    // Breite am umgebenden Kasten ausrichten (sonst wird rechts abgeschnitten) + Rand, damit Kanten sichtbar bleiben
+    const boxW = cvr.parentElement ? cvr.parentElement.clientWidth : window.innerWidth - 28;
+    const maxW = Math.max(120, Math.min(boxW, 740)), PAD = 8;
     const [x0, y0, x1, y1] = bbox(result);
     const wmm = Math.max(1, x1 - x0), hmm = Math.max(1, y1 - y0);
-    const s = maxW / wmm;
-    cvr.width = maxW; cvr.height = Math.max(120, Math.round(hmm * s)) + 2;
+    const s = (maxW - 2 * PAD) / wmm;
+    cvr.width = maxW; cvr.height = Math.max(120, Math.round(hmm * s) + 2 * PAD);
     cvr.style.width = maxW + 'px';
     ctxr.fillStyle = '#243244'; ctxr.fillRect(0, 0, cvr.width, cvr.height);
-    const toS = p => [(p[0] - x0) * s, cvr.height - (p[1] - y0) * s - 1];
+    const toS = p => [PAD + (p[0] - x0) * s, cvr.height - PAD - (p[1] - y0) * s];
     for (const k of result) {
       ctxr.strokeStyle = k.outer ? '#ff5a3c' : '#49b3ff';
       ctxr.lineWidth = 2; ctxr.beginPath();
