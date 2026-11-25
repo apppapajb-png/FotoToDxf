@@ -59,8 +59,10 @@
   <section id="screen-start">
     <div class="card">
       <h2>Was möchtest du umwandeln?</h2>
+      <button id="btn-livecam" class="accent" type="button" style="width:100%;margin-bottom:12px;font-size:17px">
+        <span class="em">🎥</span>Live‑Kamera (DXF&nbsp;Camera)</button>
       <div class="big">
-        <label class="file"><button class="accent" type="button"><span class="em">📷</span>Kamera</button>
+        <label class="file"><button class="ghost" type="button"><span class="em">📷</span>Foto aufnehmen</button>
           <input id="in-cam" type="file" accept="image/*" capture="environment"></label>
         <label class="file"><button class="ghost" type="button"><span class="em">🖼️</span>Bild öffnen</button>
           <input id="in-img" type="file" accept="image/*"></label>
@@ -84,7 +86,7 @@
   <!-- ECKEN SETZEN (Foto) -->
   <section id="screen-corners" class="hide">
     <div class="card">
-      <h2>4 Ecken des A4‑Blatts antippen</h2>
+      <h2>4 Ecken des Referenz‑Rechtecks antippen</h2>
       <div class="stage"><canvas id="cv-pick"></canvas></div>
       <div class="row" style="justify-content:center;gap:8px;margin-top:8px">
         <button class="ghost" id="zoom-out" type="button" style="min-width:54px;font-size:20px">−</button>
@@ -92,17 +94,46 @@
         <button class="ghost" id="zoom-in" type="button" style="min-width:54px;font-size:20px">+</button>
       </div>
       <div class="status" id="pick-status">Ecke antippen und mit dem Finger genau schieben – die Lupe hilft. Zwei Finger = zoomen.</div>
-      <div class="num2" style="margin-top:10px">
-        <div><label>A4 Breite mm</label><br><input id="a4w" type="number" value="210"></div>
-        <div><label>A4 Höhe mm</label><br><input id="a4h" type="number" value="297"></div>
+      <div class="row" style="margin-top:10px">
+        <label>Referenz:</label>
+        <select id="ref-preset" style="font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:9px">
+          <option value="210x297" selected>A4 (210 × 297)</option>
+          <option value="148x210">A5 (148 × 210)</option>
+          <option value="297x420">A3 (297 × 420)</option>
+          <option value="custom">Eigenes Maß …</option>
+        </select>
+      </div>
+      <div class="num2" style="margin-top:8px">
+        <div><label>Breite mm</label><br><input id="a4w" type="number" value="210"></div>
+        <div><label>Höhe mm</label><br><input id="a4h" type="number" value="297"></div>
       </div>
       <div class="toolbar">
         <button class="ghost" id="pick-reset" type="button">↺ Punkte neu</button>
         <button class="green" id="pick-go" type="button" disabled>✓ Entzerren & erkennen</button>
       </div>
-      <p class="hint" style="margin-top:8px">Tipp: ins Bild zoomen (zwei Finger) hilft beim genauen Setzen. Punkt daneben? „Punkte neu“.</p>
+      <p class="hint" style="margin-top:8px">Als Referenz geht jedes <b>Rechteck mit bekannter Größe</b> (A4‑Blatt, Karton, Platte, Zuschnitt …). Breite/Höhe frei eintragen – <b>A4 ist voreingestellt</b>. Tipp: zwei Finger zum Zoomen, Lupe für die genaue Ecke.</p>
     </div>
     <button class="ghost" id="corners-back" type="button">‹ Zurück</button>
+  </section>
+
+  <!-- LIVE-KAMERA (DXF Camera) -->
+  <section id="screen-cam" class="hide">
+    <div class="card">
+      <h2>DXF‑Camera</h2>
+      <div class="stage" id="cam-stage" style="background:#000">
+        <video id="cam-video" playsinline muted style="display:block;width:100%;height:auto"></video>
+        <canvas id="cam-ov" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+      </div>
+      <div class="row" style="justify-content:space-between;margin-top:10px">
+        <label><input type="checkbox" id="cam-edges" checked> Kanten anzeigen</label>
+        <label><input type="checkbox" id="cam-only"> nur Kanten</label>
+      </div>
+      <div class="toolbar">
+        <button class="accent" id="cam-shot" type="button" style="font-size:17px">⦿ Auslösen → DXF</button>
+      </div>
+      <p class="hint" style="margin-top:8px">Schablone <b>mit A4‑Blatt</b> ins Bild nehmen, ruhig halten, auslösen. Danach die 4 A4‑Ecken prüfen (meist schon gesetzt) → erkennen.</p>
+    </div>
+    <button class="ghost" id="cam-back" type="button">‹ Zurück</button>
   </section>
 
   <!-- ERGEBNIS -->
@@ -114,6 +145,7 @@
       <div class="toolbar">
         <button class="accent" id="btn-beautify" type="button">✨ Verschönern</button>
         <button class="green" id="btn-dxf" type="button">💾 DXF speichern</button>
+        <button class="ghost" id="btn-share" type="button">📤 Öffnen in … / Teilen</button>
       </div>
       <div class="row" style="margin-top:6px">
         <label><input type="checkbox" id="opt-mirror"> Spiegeln</label>

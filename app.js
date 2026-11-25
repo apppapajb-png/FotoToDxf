@@ -2,7 +2,7 @@
    Nutzt OpenCV.js für Schwelle + Konturen und geom.js für Linien/Bögen + DXF. */
 (function () {
   'use strict';
-  const APP_VER = '0.2';
+  const APP_VER = '0.3';
   const $ = s => document.querySelector(s);
   const G = window.Geom;
   const FP = { tol: 0.2, minr: 1.0, maxr: 5000, smooth: 0.6, minArea: 50 };
@@ -10,8 +10,8 @@
   document.getElementById('ver').textContent = 'v' + APP_VER;
 
   // ---------- Bildschirme ----------
-  const screens = { start: $('#screen-start'), corners: $('#screen-corners'), result: $('#screen-result') };
-  function show(name) { for (const k in screens) screens[k].classList.toggle('hide', k !== name); window.scrollTo(0, 0); }
+  const screens = { start: $('#screen-start'), corners: $('#screen-corners'), cam: $('#screen-cam'), result: $('#screen-result') };
+  function show(name) { if (name !== 'cam') stopCam(); for (const k in screens) screens[k].classList.toggle('hide', k !== name); window.scrollTo(0, 0); }
   function overlay(on, text) { $('#overlay').classList.toggle('hide', !on); if (text) $('#ov-text').textContent = text; }
   function setStatus(el, msg, err) { el.textContent = msg || ''; el.classList.toggle('err', !!err); }
 
@@ -45,7 +45,8 @@
       const w = Math.round(img.naturalWidth * sc), h = Math.round(img.naturalHeight * sc);
       imgCanvas = document.createElement('canvas'); imgCanvas.width = w; imgCanvas.height = h;
       imgCanvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      srcImg = imgCanvas; pickPts = [];
+      srcImg = imgCanvas;
+      pickPts = (cvReady() ? (autoDetectA4(imgCanvas) || []) : []);
       startCornerPick();
     };
     img.onerror = () => alert('Bild konnte nicht geladen werden.');
@@ -177,6 +178,15 @@
   $('#pick-reset').onclick = () => { pickPts = []; dragPt = -1; showLoupe = false; drawPick(); updateGo(); };
   $('#corners-back').onclick = () => show('start');
   $('#pick-go').onclick = () => waitCv(runPhoto);
+  // Referenz-Voreinstellungen (A4 Standard) + freie Maßeingabe
+  $('#ref-preset').onchange = e => {
+    const v = e.target.value;
+    if (v === 'custom') { $('#a4w').focus(); $('#a4w').select && $('#a4w').select(); return; }
+    const p = v.split('x'); $('#a4w').value = p[0]; $('#a4h').value = p[1];
+  };
+  function presetToCustom() { const sel = $('#ref-preset'); if (sel) sel.value = 'custom'; }
+  $('#a4w').addEventListener('input', presetToCustom);
+  $('#a4h').addEventListener('input', presetToCustom);
   window.addEventListener('resize', () => { if (!screens.corners.classList.contains('hide') && srcImg) { sizePickStage(); drawPick(); } });
   window.addEventListener('orientationchange', () => { setTimeout(() => { if (!screens.corners.classList.contains('hide') && srcImg) { sizePickStage(); drawPick(); } }, 300); });
 
@@ -184,6 +194,48 @@
     const sum = pts.map(p => p[0] + p[1]), diff = pts.map(p => p[1] - p[0]);
     const amin = a => a.indexOf(Math.min.apply(null, a)), amax = a => a.indexOf(Math.max.apply(null, a));
     return [pts[amin(sum)], pts[amin(diff)], pts[amax(sum)], pts[amax(diff)]]; // TL,TR,BR,BL
+  }
+
+  // Automatische A4-Erkennung: helles, wenig gesättigtes Rechteck (weißes Blatt) finden.
+  // Rückgabe: 4 Ecken in Bild-Pixeln (geordnet) oder null.
+  function autoDetectA4(canvas) {
+    if (!cvReady()) return null;
+    let src = null;
+    try {
+      src = cv.imread(canvas);
+      const sc = 1000 / Math.max(src.rows, src.cols);
+      const small = new cv.Mat(); cv.resize(src, small, new cv.Size(Math.round(src.cols * sc), Math.round(src.rows * sc)));
+      const rgb = new cv.Mat(); cv.cvtColor(small, rgb, cv.COLOR_RGBA2RGB);
+      const hsv = new cv.Mat(); cv.cvtColor(rgb, hsv, cv.COLOR_RGB2HSV);
+      const ch = new cv.MatVector(); cv.split(hsv, ch);
+      const S = ch.get(1), V = ch.get(2);
+      const Vth = new cv.Mat(), Sth = new cv.Mat(), mask = new cv.Mat();
+      cv.threshold(V, Vth, 165, 255, cv.THRESH_BINARY);
+      cv.threshold(S, Sth, 75, 255, cv.THRESH_BINARY_INV);
+      cv.bitwise_and(Vth, Sth, mask);
+      const k1 = cv.Mat.ones(5, 5, cv.CV_8U), k2 = cv.Mat.ones(15, 15, cv.CV_8U);
+      cv.morphologyEx(mask, mask, cv.MORPH_OPEN, k1);
+      cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, k2);
+      const contours = new cv.MatVector(), hier = new cv.Mat();
+      cv.findContours(mask, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      const Hs = small.rows, Ws = small.cols; let best = null, bestA = 0;
+      for (let i = 0; i < contours.size(); i++) {
+        const c = contours.get(i); const a = cv.contourArea(c);
+        if (a < 0.01 * Hs * Ws || a > 0.9 * Hs * Ws) { c.delete(); continue; }
+        const peri = cv.arcLength(c, true); let quad = null;
+        for (const ef of [0.02, 0.03, 0.04, 0.05, 0.07]) {
+          const ap = new cv.Mat(); cv.approxPolyDP(c, ef * peri, true, ap);
+          if (ap.rows === 4 && cv.isContourConvex(ap)) { quad = []; for (let j = 0; j < 4; j++) quad.push([ap.data32S[2 * j], ap.data32S[2 * j + 1]]); }
+          ap.delete(); if (quad) break;
+        }
+        c.delete();
+        if (quad && a > bestA) { bestA = a; best = quad; }
+      }
+      src.delete(); small.delete(); rgb.delete(); hsv.delete(); ch.delete();
+      Vth.delete(); Sth.delete(); mask.delete(); k1.delete(); k2.delete(); contours.delete(); hier.delete();
+      if (!best) return null;
+      return orderQuad(best.map(p => [p[0] / sc, p[1] / sc]));
+    } catch (e) { console.error(e); try { if (src) src.delete(); } catch (_) { } return null; }
   }
 
   // =========================================================
@@ -383,5 +435,89 @@
     try { new QRCode(box, { text: url, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M }); }
     catch (e) { box.textContent = url; }
     $('#qr-url').textContent = url;
+  };
+
+  // ---------- DXF teilen / in App öffnen (iOS/Android Teilen-Auswahl) ----------
+  async function shareDxf() {
+    if (!result.length) return;
+    let out;
+    try { out = G.makeDxf(result, { origin: 'll', mirror: $('#opt-mirror').checked }); }
+    catch (e) { alert('DXF konnte nicht erstellt werden:\n' + e.message); return; }
+    const name = 'FotoToDxf_' + Date.now() + '.dxf';
+    try {
+      const file = new File([out.dxf], name, { type: 'application/dxf' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: 'Foto to DXF', text: 'DXF aus Foto to DXF' });
+        setStatus($('#res-status'), 'Geteilt – in der Auswahl „CADREADER“ (oder eine andere App) wählen.');
+        return;
+      }
+    } catch (e) { if (e && e.name === 'AbortError') return; console.error(e); }
+    // Rückfallebene: Download
+    const blob = new Blob([out.dxf], { type: 'application/dxf' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    setStatus($('#res-status'), 'Teilen hier nicht verfügbar – DXF gespeichert. In „Dateien“ öffnen → Teilen → CADREADER.');
+  }
+  $('#btn-share').onclick = shareDxf;
+
+  // =========================================================
+  //  Live-Kamera (DXF Camera): Kanten live + auslösen -> Ecken
+  // =========================================================
+  const video = $('#cam-video'), camOv = $('#cam-ov');
+  let camStream = null, camRAF = null, camFrame = 0;
+  const eSmall = document.createElement('canvas'); const eCtx = eSmall.getContext('2d', { willReadFrequently: true });
+
+  async function startLiveCam() {
+    show('cam');
+    try {
+      camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+      video.srcObject = camStream; await video.play();
+      camLoop();
+    } catch (e) {
+      console.error(e);
+      alert('Kamera konnte nicht gestartet werden:\n' + e.message + '\n\nHinweise: Die Seite muss über https:// laufen (GitHub Pages passt), und der Kamerazugriff muss erlaubt werden. In iOS Safari nutzen (nicht in einer anderen App‑Vorschau).');
+      show('start');
+    }
+  }
+  function stopCam() { if (camRAF) { cancelAnimationFrame(camRAF); camRAF = null; } if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; } if (video) video.srcObject = null; }
+
+  function camLoop() {
+    camRAF = requestAnimationFrame(camLoop);
+    if (!video.videoWidth) return;
+    const dispW = camOv.clientWidth, dispH = camOv.clientHeight || Math.round(dispW * video.videoHeight / video.videoWidth);
+    if (camOv.width !== dispW || camOv.height !== dispH) { camOv.width = dispW; camOv.height = dispH; }
+    const octx = camOv.getContext('2d');
+    octx.clearRect(0, 0, camOv.width, camOv.height);
+    if (!$('#cam-edges').checked) return;
+    if ((camFrame++ & 1)) return;    // nur jedes 2. Bild rechnen (Tempo)
+    const sw = 420, sh = Math.max(2, Math.round(video.videoHeight / video.videoWidth * sw));
+    eSmall.width = sw; eSmall.height = sh;
+    eCtx.drawImage(video, 0, 0, sw, sh);
+    let d; try { d = eCtx.getImageData(0, 0, sw, sh).data; } catch (e) { return; }
+    const g = new Float32Array(sw * sh);
+    for (let i = 0; i < sw * sh; i++) g[i] = 0.299 * d[4 * i] + 0.587 * d[4 * i + 1] + 0.114 * d[4 * i + 2];
+    const eg = eCtx.createImageData(sw, sh), ed = eg.data;
+    for (let y = 1; y < sh - 1; y++) for (let x = 1; x < sw - 1; x++) {
+      const i = y * sw + x;
+      const gx = -g[i - sw - 1] - 2 * g[i - 1] - g[i + sw - 1] + g[i - sw + 1] + 2 * g[i + 1] + g[i + sw + 1];
+      const gy = -g[i - sw - 1] - 2 * g[i - sw] - g[i - sw + 1] + g[i + sw - 1] + 2 * g[i + sw] + g[i + sw + 1];
+      const o = 4 * i;
+      if (Math.hypot(gx, gy) > 95) { ed[o] = 0; ed[o + 1] = 255; ed[o + 2] = 210; ed[o + 3] = 255; } else ed[o + 3] = 0;
+    }
+    eCtx.putImageData(eg, 0, 0);
+    if ($('#cam-only').checked) { octx.fillStyle = '#0a0f16'; octx.fillRect(0, 0, camOv.width, camOv.height); }
+    octx.imageSmoothingEnabled = false;
+    octx.drawImage(eSmall, 0, 0, camOv.width, camOv.height);
+  }
+  $('#btn-livecam').onclick = startLiveCam;
+  $('#cam-back').onclick = () => show('start');
+  $('#cam-shot').onclick = () => {
+    if (!video.videoWidth) { alert('Kamerabild noch nicht bereit – kurz warten.'); return; }
+    const vw = video.videoWidth, vh = video.videoHeight, MAX = 2000, sc = Math.min(1, MAX / Math.max(vw, vh));
+    imgCanvas = document.createElement('canvas'); imgCanvas.width = Math.round(vw * sc); imgCanvas.height = Math.round(vh * sc);
+    imgCanvas.getContext('2d').drawImage(video, 0, 0, imgCanvas.width, imgCanvas.height);
+    srcImg = imgCanvas; stopCam();
+    pickPts = (cvReady() ? (autoDetectA4(imgCanvas) || []) : []);
+    startCornerPick();
   };
 })();
