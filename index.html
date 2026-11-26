@@ -42,6 +42,9 @@
   .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
   .toolbar button{flex:1;min-width:120px}
   .num2{display:flex;gap:14px;flex-wrap:wrap}
+  .seg{display:flex;gap:6px;margin-bottom:10px}
+  .seg button{flex:1;min-height:44px;padding:10px 6px;font-size:14px;background:#fff;color:var(--txt);border:1px solid var(--line)}
+  .seg button.on{background:var(--head);color:#fff;border-color:var(--head)}
   .ov{position:fixed;inset:0;background:rgba(10,18,30,.78);display:flex;align-items:center;justify-content:center;z-index:50;color:#fff;flex-direction:column;gap:14px;text-align:center;padding:24px}
   .spin{width:42px;height:42px;border:5px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;animation:sp 1s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
@@ -86,7 +89,12 @@
   <!-- ECKEN SETZEN (Foto) -->
   <section id="screen-corners" class="hide">
     <div class="card">
-      <h2>4 Ecken des Referenz‑Rechtecks antippen</h2>
+      <h2 id="pick-title">4 Ecken des Referenz‑Rechtecks antippen</h2>
+      <div class="seg" id="pick-mode">
+        <button type="button" data-mode="corners" class="on">📐 Ecken</button>
+        <button type="button" data-mode="rect">▭ Fenster</button>
+        <button type="button" data-mode="lasso">✎ Lasso</button>
+      </div>
       <div class="stage"><canvas id="cv-pick"></canvas></div>
       <div class="row" style="justify-content:center;gap:8px;margin-top:8px">
         <button class="ghost" id="zoom-out" type="button" style="min-width:54px;font-size:20px">−</button>
@@ -109,9 +117,11 @@
       </div>
       <div class="toolbar">
         <button class="ghost" id="pick-reset" type="button">↺ Punkte neu</button>
+        <button class="ghost" id="region-clear" type="button" disabled>✕ Bereich löschen</button>
         <button class="green" id="pick-go" type="button" disabled>✓ Entzerren & erkennen</button>
       </div>
-      <p class="hint" style="margin-top:8px">Als Referenz geht jedes <b>Rechteck mit bekannter Größe</b> (A4‑Blatt, Karton, Platte, Zuschnitt …). Breite/Höhe frei eintragen – <b>A4 ist voreingestellt</b>. Tipp: zwei Finger zum Zoomen, Lupe für die genaue Ecke.</p>
+      <p class="hint" style="margin-top:8px">Als Referenz geht jedes <b>Rechteck mit bekannter Größe</b> (A4‑Blatt, Karton, Platte, Zuschnitt …). Breite/Höhe frei eintragen – <b>A4 ist voreingestellt</b>. Tipp: zwei Finger zum Zoomen, Lupe für die genaue Ecke.<br>
+        <b>Nur einen Teil umwandeln?</b> Mit <b>▭ Fenster</b> ein Rechteck aufziehen oder mit <b>✎ Lasso</b> das Teil frei umfahren – dann kommt nur, was <b>innerhalb</b> liegt, in die DXF. Ohne Bereich wird das ganze Bild verwendet.</p>
     </div>
     <button class="ghost" id="corners-back" type="button">‹ Zurück</button>
   </section>
@@ -163,7 +173,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script>window.Module={onRuntimeInitialized(){window.cvReady=true;}};</script>
 <script async src="https://docs.opencv.org/4.10.0/opencv.js" onload="window.cvScriptLoaded=true"></script>
-<script src="geom.js?v=0.3.3"></script>
-<script src="app.js?v=0.3.3"></script>
+<script src="geom.js?v=0.4.0"></script>
+<script src="app.js?v=0.4.0"></script>
 </body>
 </html>
