@@ -2,7 +2,7 @@
    Nutzt OpenCV.js für Schwelle + Konturen und geom.js für Linien/Bögen + DXF. */
 (function () {
   'use strict';
-  const APP_VER = '0.3.3';
+  const APP_VER = '0.4.0';
   const $ = s => document.querySelector(s);
   const G = window.Geom;
   const FP = { tol: 0.2, minr: 1.0, maxr: 5000, smooth: 0.6, minArea: 50 };
@@ -29,6 +29,9 @@
   let imgCanvas = null;     // Canvas in Originalgröße
   let pickPts = [];         // 4 Ecken in Bild-Pixeln
   let result = [];          // Konturen {els, outer, closed, P}
+  let region = null;        // optionaler Bereich (Fenster/Lasso) als Polygon in Bild-Pixeln; null = ganzes Bild
+  let regionDraft = null;   // Bereich, der gerade gezeichnet wird
+  let pickMode = 'corners'; // 'corners' | 'rect' | 'lasso'
 
   // =========================================================
   //  Bild / SVG laden
@@ -52,9 +55,9 @@
     img.onerror = () => alert('Bild konnte nicht geladen werden.');
     img.src = url;
   }
-  $('#in-cam').onchange = e => loadFile(e.target.files[0], 'img');
-  $('#in-img').onchange = e => loadFile(e.target.files[0], 'img');
-  $('#in-svg').onchange = e => loadFile(e.target.files[0], 'svg');
+  $('#in-cam').onchange = e => { loadFile(e.target.files[0], 'img'); e.target.value = ''; };
+  $('#in-img').onchange = e => { loadFile(e.target.files[0], 'img'); e.target.value = ''; };
+  $('#in-svg').onchange = e => { loadFile(e.target.files[0], 'svg'); e.target.value = ''; };
 
   // =========================================================
   //  Ecken setzen
@@ -85,6 +88,7 @@
 
   function startCornerPick() {
     show('corners');
+    region = null; regionDraft = null; setPickMode('corners');
     view = { scale: 1, ox: 0, oy: 0 };
     requestAnimationFrame(() => { sizePickStage(); fitView(); drawPick(); });
     setStatus($('#pick-status'), 'Ecke antippen und mit dem Finger genau schieben – die Lupe zeigt die Stelle. Zwei Finger = zoomen/verschieben.');
@@ -96,6 +100,7 @@
     ctxp.fillStyle = '#1a2533'; ctxp.fillRect(0, 0, cssW, cssH);
     ctxp.imageSmoothingQuality = 'high';
     ctxp.drawImage(srcImg, view.ox, view.oy, srcImg.width * view.scale, srcImg.height * view.scale);
+    drawRegion(cssW, cssH);
     if (pickPts.length > 1) {
       ctxp.strokeStyle = '#f5a623'; ctxp.lineWidth = 2; ctxp.beginPath();
       pickPts.forEach((p, i) => { const c = img2css(p); i ? ctxp.lineTo(c[0], c[1]) : ctxp.moveTo(c[0], c[1]); });
@@ -108,6 +113,27 @@
       ctxp.fillText(i + 1, c[0], c[1]);
     });
     if (showLoupe && loupeAt) drawLoupe(loupeAt);
+  }
+  function draftPoly() {
+    if (!regionDraft) return null;
+    if (regionDraft.type === 'rect') { const a = regionDraft.a, b = regionDraft.b; return [[a[0], a[1]], [b[0], a[1]], [b[0], b[1]], [a[0], b[1]]]; }
+    return regionDraft.pts;
+  }
+  function drawRegion(cssW, cssH) {
+    const poly = regionDraft ? draftPoly() : region;
+    if (!poly || poly.length < 2) return;
+    ctxp.save();
+    if (!regionDraft && poly.length >= 3) {
+      // außerhalb des Bereichs abdunkeln
+      ctxp.beginPath(); ctxp.rect(0, 0, cssW, cssH);
+      poly.forEach((p, i) => { const c = img2css(p); i ? ctxp.lineTo(c[0], c[1]) : ctxp.moveTo(c[0], c[1]); });
+      ctxp.closePath(); ctxp.fillStyle = 'rgba(5,10,18,.55)'; ctxp.fill('evenodd');
+    }
+    ctxp.beginPath();
+    poly.forEach((p, i) => { const c = img2css(p); i ? ctxp.lineTo(c[0], c[1]) : ctxp.moveTo(c[0], c[1]); });
+    if (!regionDraft || regionDraft.type === 'rect') ctxp.closePath();
+    ctxp.strokeStyle = '#3ddc84'; ctxp.lineWidth = 2.5; ctxp.setLineDash([8, 5]); ctxp.stroke();
+    ctxp.restore();
   }
   function drawLoupe(imgPt) {
     const R = 60, mag = 3.4, cssW = cvp.width / DPR, cssH = cvp.height / DPR;
@@ -125,16 +151,54 @@
   }
   function updateGo() {
     $('#pick-go').disabled = pickPts.length < 4;
-    setStatus($('#pick-status'), pickPts.length < 4 ? ('Noch ' + (4 - pickPts.length) + ' Ecke(n) setzen …') : 'Alle 4 gesetzt. Zum Feinjustieren einen Punkt antippen und schieben (Lupe). Dann „Entzerren & erkennen“.');
+    $('#region-clear').disabled = !region;
+    if (pickMode !== 'corners') { setStatus($('#pick-status'), modeHint()); return; }
+    setStatus($('#pick-status'), pickPts.length < 4 ? ('Noch ' + (4 - pickPts.length) + ' Ecke(n) setzen …') : 'Alle 4 gesetzt. Zum Feinjustieren einen Punkt antippen und schieben (Lupe). Optional: mit ▭ Fenster oder ✎ Lasso nur einen Bereich wählen. Dann „Entzerren & erkennen“.');
   }
+  function modeHint() {
+    const has = region ? ' Bereich gesetzt ✓ – nur Konturen darin kommen in die DXF. Neu zeichnen ersetzt ihn.' : '';
+    if (pickMode === 'rect') return 'Fenster: mit einem Finger ein Rechteck um das Teil aufziehen.' + has;
+    return 'Lasso: mit einem Finger das Teil frei umfahren – beim Loslassen wird der Bereich geschlossen.' + has;
+  }
+  function setPickMode(m) {
+    pickMode = m;
+    document.querySelectorAll('#pick-mode button').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
+    $('#pick-title').textContent = m === 'corners' ? '4 Ecken des Referenz‑Rechtecks antippen' : (m === 'rect' ? 'Fenster: Bereich für die DXF aufziehen' : 'Lasso: Bereich für die DXF umfahren');
+    updateGo();
+  }
+  document.querySelectorAll('#pick-mode button').forEach(b => { b.onclick = () => { setPickMode(b.dataset.mode); if (srcImg) drawPick(); }; });
+  const clampImg = p => [Math.max(0, Math.min(srcImg.width, p[0])), Math.max(0, Math.min(srcImg.height, p[1]))];
+  function beginRegion(xy) {
+    const p = clampImg(css2img(xy[0], xy[1]));
+    regionDraft = pickMode === 'rect' ? { type: 'rect', a: p, b: p } : { type: 'lasso', pts: [p] };
+    showLoupe = true; loupeAt = p; drawPick();
+  }
+  function moveRegion(xy) {
+    if (!regionDraft) return;
+    const p = clampImg(css2img(xy[0], xy[1]));
+    if (regionDraft.type === 'rect') regionDraft.b = p;
+    else { const l = img2css(regionDraft.pts[regionDraft.pts.length - 1]), c = img2css(p); if (Math.hypot(c[0] - l[0], c[1] - l[1]) >= 3) regionDraft.pts.push(p); }
+    loupeAt = p; drawPick();
+  }
+  function endRegion() {
+    if (!regionDraft) return;
+    const poly = draftPoly(); regionDraft = null; showLoupe = false;
+    // zu kleine Bereiche (versehentliches Antippen) ignorieren
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; for (const p of poly) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); }
+    if (poly.length >= 3 && (x1 - x0) * view.scale > 15 && (y1 - y0) * view.scale > 15) region = poly.map(p => p.slice());
+    drawPick(); updateGo();
+  }
+  let ptUndo = null; // um einen versehentlich (beim Zwei-Finger-Zoom) gesetzten Punkt zurückzunehmen
   function startPoint(xy) {
+    if (pickMode !== 'corners') return beginRegion(xy);
     const img = css2img(xy[0], xy[1]);
+    ptUndo = pickPts.map(p => p.slice());
     if (pickPts.length < 4) { pickPts.push(img); dragPt = pickPts.length - 1; }
     else { let k = 0, bd = 1e9; pickPts.forEach((p, i) => { const c = img2css(p); const d = Math.hypot(c[0] - xy[0], c[1] - xy[1]); if (d < bd) { bd = d; k = i; } }); dragPt = k; pickPts[k] = img; }
     showLoupe = true; loupeAt = pickPts[dragPt]; drawPick(); updateGo();
   }
-  function movePoint(xy) { if (dragPt < 0) return; const img = css2img(xy[0], xy[1]); pickPts[dragPt] = img; loupeAt = img; drawPick(); }
-  function endPoint() { showLoupe = false; dragPt = -1; drawPick(); updateGo(); }
+  function movePoint(xy) { if (pickMode !== 'corners') return moveRegion(xy); if (dragPt < 0) return; const img = css2img(xy[0], xy[1]); pickPts[dragPt] = img; loupeAt = img; drawPick(); }
+  function endPoint() { if (pickMode !== 'corners') return endRegion(); ptUndo = null; showLoupe = false; dragPt = -1; drawPick(); updateGo(); }
 
   function zoomAt(cx, cy, f) {
     const ip = css2img(cx, cy);
@@ -147,6 +211,10 @@
     e.preventDefault();
     if (e.touches.length === 2) {
       const a = localXY(e.touches[0]), b = localXY(e.touches[1]);
+      if (gesture === 'point') {
+        if (regionDraft) regionDraft = null;
+        if (ptUndo) { pickPts = ptUndo; ptUndo = null; dragPt = -1; updateGo(); }
+      }
       gesture = 'pan'; showLoupe = false;
       pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], scale: view.scale, ox: view.ox, oy: view.oy };
       drawPick(); return;
@@ -176,6 +244,7 @@
   $('#zoom-out').onclick = () => zoomAt(cvp.width / DPR / 2, cvp.height / DPR / 2, 1 / 1.4);
   $('#zoom-fit').onclick = () => { fitView(); drawPick(); };
   $('#pick-reset').onclick = () => { pickPts = []; dragPt = -1; showLoupe = false; drawPick(); updateGo(); };
+  $('#region-clear').onclick = () => { region = null; regionDraft = null; drawPick(); updateGo(); };
   $('#corners-back').onclick = () => show('start');
   $('#pick-go').onclick = () => waitCv(runPhoto);
   // Referenz-Voreinstellungen (A4 Standard) + freie Maßeingabe
@@ -279,10 +348,18 @@
 
     // Konturen einsammeln (A4-Rechteck selbst überspringen)
     const raw = [];
+    const inPoly = (pt, Q) => { let ins = false; for (let a = 0, b = Q.length - 1; a < Q.length; b = a++) { if (((Q[a][1] > pt[1]) !== (Q[b][1] > pt[1])) && (pt[0] < (Q[b][0] - Q[a][0]) * (pt[1] - Q[a][1]) / (Q[b][1] - Q[a][1]) + Q[a][0])) ins = !ins; } return ins; };
+    // Kontur liegt im gewählten Bereich (Fenster/Lasso)? -> mind. 85 % ihrer Punkte innerhalb
+    const inRegion = (d, n) => {
+      if (!region) return true;
+      const step = Math.max(1, Math.floor(n / 300)); let ins = 0, tot = 0;
+      for (let j = 0; j < n; j += step) { tot++; if (inPoly([d[2 * j], d[2 * j + 1]], region)) ins++; }
+      return ins >= 0.85 * tot;
+    };
     for (let i = 0; i < contours.size(); i++) {
       const cnt = contours.get(i);
       const nPts = cnt.data32S.length / 2;
-      if (nPts < 8) { cnt.delete(); continue; }
+      if (nPts < 8 || !inRegion(cnt.data32S, nPts)) { cnt.delete(); continue; }
       const P = [];
       for (let j = 0; j < nPts; j++) P.push(toMM(cnt.data32S[2 * j], cnt.data32S[2 * j + 1]));
       cnt.delete();
@@ -299,11 +376,11 @@
     }
     // Außen/Innen über Verschachtelung bestimmen (nicht über OpenCV-Hierarchie:
     // dort ist das weiße A4-Blatt die äußere Ebene und die Schablone nur ein „Loch“ darin).
-    const inPoly = (pt, Q) => { let ins = false; for (let a = 0, b = Q.length - 1; a < Q.length; b = a++) { if (((Q[a][1] > pt[1]) !== (Q[b][1] > pt[1])) && (pt[0] < (Q[b][0] - Q[a][0]) * (pt[1] - Q[a][1]) / (Q[b][1] - Q[a][1]) + Q[a][0])) ins = !ins; } return ins; };
     for (const r of raw) { let depth = 0; for (const o of raw) if (o !== r && inPoly(r.P[0], o.P)) depth++; r.outer = depth % 2 === 0; }
     src.delete(); gray.delete(); bin.delete(); m.delete(); contours.delete(); hier.delete();
     srcTri.delete(); dstTri.delete(); M.delete();
 
+    if (!raw.length && region) { overlay(false); alert('Im gewählten Bereich wurde keine Kontur gefunden. Bereich etwas größer ziehen (das Teil muss ganz drin liegen) oder „✕ Bereich löschen“.'); return; }
     if (!raw.length) { overlay(false); alert('Keine Kontur gefunden. Tipps: Schablone deutlich vom Untergrund abheben, A4‑Ecken genau setzen, gutes Licht.'); return; }
 
     // y nach oben spiegeln (DXF-Konvention), in den positiven Bereich schieben
@@ -322,7 +399,7 @@
     }
     overlay(false);
     if (!result.length) { alert('Keine verwertbare Kontur.'); return; }
-    showResult('Foto erkannt: ' + result.length + ' Kontur(en).');
+    showResult('Foto erkannt: ' + result.length + ' Kontur(en)' + (region ? ' im gewählten Bereich' : '') + '.');
   }
   function resampleClosedSmooth(P, smoothMm) {
     // über geom: resample (0.5) + Gauss-Glättung

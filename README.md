@@ -23,6 +23,10 @@ oder einer **SVG** eine **DXF R12** mit echten Linien und Bögen für Xilog Maes
 ## So benutzt man sie
 - **Kamera / Bild öffnen:** Schablone **zusammen mit einem A4‑Blatt** fotografieren → die **4 Ecken des Blatts**
   antippen → „Entzerren & erkennen“ → Ergebnis prüfen → **DXF speichern**.
+- **Nur einen Teil umwandeln (Fenster / Lasso):** Im Ecken‑Bildschirm oben auf **▭ Fenster** tippen und ein Rechteck
+  um das gewünschte Teil aufziehen – oder **✎ Lasso** und das Teil frei mit dem Finger umfahren. Nur Konturen, die
+  (fast) ganz im Bereich liegen, kommen in die DXF. „✕ Bereich löschen“ = wieder das ganze Bild. Zurück zu **📐 Ecken**,
+  um die Referenz‑Ecken weiter zu verschieben.
 - **SVG öffnen:** SVG wählen → wird sofort in Linien/Bögen umgewandelt → **DXF speichern**.
 - **Verschönern:** glättet die Konturen und rundet Ecken (Glättung + Eckenradius werden abgefragt).
 - **Teilen (QR):** zeigt einen QR‑Code mit der App‑Adresse – zum Weitergeben an Kollegen.
