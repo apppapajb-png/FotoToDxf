@@ -2,7 +2,7 @@
    Nutzt OpenCV.js für Schwelle + Konturen und geom.js für Linien/Bögen + DXF. */
 (function () {
   'use strict';
-  const APP_VER = '0.4.1';
+  const APP_VER = '0.4.2';
   const $ = s => document.querySelector(s);
   const G = window.Geom;
   const FP = { tol: 0.2, minr: 1.0, maxr: 5000, smooth: 0.6, minArea: 50 };
@@ -17,11 +17,16 @@
 
   // ---------- OpenCV bereit? ----------
   function cvReady() { return window.cvReady && typeof cv !== 'undefined' && cv.Mat; }
-  function waitCv(cb) {
+  function cvStep() { return window.cvScriptLoaded ? 'Schritt 2/2: Bildverarbeitung vorbereiten' : 'Schritt 1/2: Herunterladen (ca. 10 MB, nur beim ersten Mal)'; }
+  function waitCv(cb, onFail) {
     if (cvReady()) return cb();
-    overlay(true, 'Bildverarbeitung wird geladen …');
-    const t = setInterval(() => { if (cvReady()) { clearInterval(t); overlay(false); cb(); } }, 120);
-    setTimeout(() => { if (!cvReady()) { clearInterval(t); overlay(false); alert('Die Bildverarbeitung (OpenCV) konnte nicht geladen werden. Internetverbindung prüfen und Seite neu laden.'); } }, 20000);
+    overlay(true, 'Bildverarbeitung wird geladen … bitte warten');
+    const t0 = Date.now(), pct = $('#ov-pct');
+    const upd = () => { if (pct) { const s = Math.round((Date.now() - t0) / 1000); pct.textContent = cvStep() + (s >= 2 ? ' · ' + s + ' s' : ''); } };
+    upd();
+    const t = setInterval(() => { if (cvReady()) { clearInterval(t); clearTimeout(to); if (pct) pct.textContent = ''; overlay(false); cb(); } else upd(); }, 250);
+    // Handy + mobiles Netz: Laden kann deutlich länger als 20 s dauern
+    const to = setTimeout(() => { if (!cvReady()) { clearInterval(t); if (pct) pct.textContent = ''; overlay(false); alert('Die Bildverarbeitung (OpenCV) konnte nicht geladen werden. Internetverbindung prüfen und Seite neu laden.'); if (onFail) onFail(); } }, 90000);
   }
 
   // ---------- Zustand ----------
@@ -605,11 +610,17 @@
   //  Live-Kamera (DXF Camera): Kanten live + auslösen -> Ecken
   // =========================================================
   const video = $('#cam-video'), camOv = $('#cam-ov');
-  let camStream = null, camRAF = null, camFrame = 0;
+  let camStream = null, camRAF = null, camLast = 0, camCost = 0;
   const eSmall = document.createElement('canvas'); const eCtx = eSmall.getContext('2d', { willReadFrequently: true });
+  let eGray = null, eImg = null, eU32 = null;   // Puffer wiederverwenden (kein Neuanlegen pro Bild)
+  const EDGE_ON = 0xFFD2FF00;                    // RGBA (0,255,210,255) als Little-Endian-Uint32
 
-  async function startLiveCam() {
+  // Kamera erst starten, wenn OpenCV fertig geladen ist: das Laden/Übersetzen der ~10 MB
+  // blockiert das Handy einige Sekunden – sonst steht das Kamerabild so lange still.
+  function startLiveCam() { waitCv(startLiveCamNow); }
+  async function startLiveCamNow() {
     show('cam');
+    camLast = 0; camCost = 0;
     try {
       camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
       video.srcObject = camStream; await video.play();
@@ -626,26 +637,34 @@
     camRAF = requestAnimationFrame(camLoop);
     if (!video.videoWidth) return;
     const dispW = camOv.clientWidth, dispH = camOv.clientHeight || Math.round(dispW * video.videoHeight / video.videoWidth);
-    if (camOv.width !== dispW || camOv.height !== dispH) { camOv.width = dispW; camOv.height = dispH; }
+    let resized = false;
+    if (camOv.width !== dispW || camOv.height !== dispH) { camOv.width = dispW; camOv.height = dispH; resized = true; }
     const octx = camOv.getContext('2d');
-    octx.clearRect(0, 0, camOv.width, camOv.height);
-    if (!$('#cam-edges').checked) return;
-    if ((camFrame++ & 1)) return;    // nur jedes 2. Bild rechnen (Tempo)
-    const sw = 420, sh = Math.max(2, Math.round(video.videoHeight / video.videoWidth * sw));
-    eSmall.width = sw; eSmall.height = sh;
+    if (!$('#cam-edges').checked) { octx.clearRect(0, 0, camOv.width, camOv.height); return; }
+    // Zeitbasiert drosseln: Kanten höchstens ~12×/s und nie mehr als ~40 % der Rechenzeit,
+    // damit das Live-Bild auch auf langsamen Handys flüssig bleibt.
+    // Dazwischen bleibt das letzte Kantenbild stehen (kein Löschen -> kein Flackern).
+    const now = performance.now();
+    if (!resized && now - camLast < Math.max(80, camCost * 2.5)) return;
+    camLast = now;
+    const sw = 320, sh = Math.max(2, Math.round(video.videoHeight / video.videoWidth * sw));
+    if (eSmall.width !== sw || eSmall.height !== sh || !eImg) {
+      eSmall.width = sw; eSmall.height = sh;
+      eGray = new Uint8ClampedArray(sw * sh); eImg = eCtx.createImageData(sw, sh); eU32 = new Uint32Array(eImg.data.buffer);
+    }
     eCtx.drawImage(video, 0, 0, sw, sh);
     let d; try { d = eCtx.getImageData(0, 0, sw, sh).data; } catch (e) { return; }
-    const g = new Float32Array(sw * sh);
-    for (let i = 0; i < sw * sh; i++) g[i] = 0.299 * d[4 * i] + 0.587 * d[4 * i + 1] + 0.114 * d[4 * i + 2];
-    const eg = eCtx.createImageData(sw, sh), ed = eg.data;
-    for (let y = 1; y < sh - 1; y++) for (let x = 1; x < sw - 1; x++) {
-      const i = y * sw + x;
-      const gx = -g[i - sw - 1] - 2 * g[i - 1] - g[i + sw - 1] + g[i - sw + 1] + 2 * g[i + 1] + g[i + sw + 1];
-      const gy = -g[i - sw - 1] - 2 * g[i - sw] - g[i - sw + 1] + g[i + sw - 1] + 2 * g[i + sw] + g[i + sw + 1];
-      const o = 4 * i;
-      if (Math.hypot(gx, gy) > 95) { ed[o] = 0; ed[o + 1] = 255; ed[o + 2] = 210; ed[o + 3] = 255; } else ed[o + 3] = 0;
+    const g = eGray, n = sw * sh;
+    for (let i = 0, o = 0; i < n; i++, o += 4) g[i] = (77 * d[o] + 150 * d[o + 1] + 29 * d[o + 2]) >> 8;
+    eU32.fill(0);
+    for (let y = 1; y < sh - 1; y++) for (let x = 1, i = y * sw + 1; x < sw - 1; x++, i++) {
+      const a = g[i - sw - 1], b = g[i - sw], c = g[i - sw + 1], l = g[i - 1], r = g[i + 1], e = g[i + sw - 1], f = g[i + sw], h = g[i + sw + 1];
+      const gx = (c + 2 * r + h) - (a + 2 * l + e), gy = (e + 2 * f + h) - (a + 2 * b + c);
+      if (gx * gx + gy * gy > 9025) eU32[i] = EDGE_ON;   // 95²
     }
-    eCtx.putImageData(eg, 0, 0);
+    eCtx.putImageData(eImg, 0, 0);
+    camCost = performance.now() - now;
+    octx.clearRect(0, 0, camOv.width, camOv.height);
     if ($('#cam-only').checked) { octx.fillStyle = '#0a0f16'; octx.fillRect(0, 0, camOv.width, camOv.height); }
     octx.imageSmoothingEnabled = false;
     octx.drawImage(eSmall, 0, 0, camOv.width, camOv.height);

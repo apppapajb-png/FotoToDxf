@@ -177,9 +177,36 @@
 
 <!-- Bibliotheken: OpenCV.js (Bildverarbeitung) + QR-Code -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script>window.Module={onRuntimeInitialized(){window.cvReady=true;}};</script>
-<script async src="https://docs.opencv.org/4.10.0/opencv.js" onload="window.cvScriptLoaded=true"></script>
-<script src="geom.js?v=0.4.1"></script>
-<script src="app.js?v=0.4.1"></script>
+<script>
+/* OpenCV laden: zuerst vom schnellen CDN (jsDelivr), bei Fehler/Zeitüberschreitung vom OpenCV-Server.
+   docs.opencv.org ist ein Doku-Server und war zeitweise extrem langsam bzw. gar nicht erreichbar. */
+window.Module = { onRuntimeInitialized() { window.cvReady = true; } };
+(function () {
+  var SRCS = [
+    'https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js',
+    'https://docs.opencv.org/4.10.0/opencv.js'
+  ];
+  var i = 0, done = false;
+  function ready() {
+    if (window.cvReady) return;
+    var c = window.cv;
+    if (c && c.Mat) { window.cvReady = true; return; }
+    if (c && typeof c.then === 'function') { c.then(function (m) { if (m && m.Mat) { window.cv = m; window.cvReady = true; } }); }
+  }
+  function next() {
+    if (done) return;
+    if (i >= SRCS.length) { window.cvLoadFailed = true; return; }
+    var s = document.createElement('script'), mine = i++;
+    s.async = true; s.src = SRCS[mine];
+    var to = setTimeout(function () { if (!window.cvScriptLoaded) { s.onload = s.onerror = null; next(); } }, 60000);
+    s.onload = function () { clearTimeout(to); done = true; window.cvScriptLoaded = true; ready(); setTimeout(ready, 500); };
+    s.onerror = function () { clearTimeout(to); next(); };
+    document.head.appendChild(s);
+  }
+  next();
+})();
+</script>
+<script src="geom.js?v=0.4.2"></script>
+<script src="app.js?v=0.4.2"></script>
 </body>
 </html>
