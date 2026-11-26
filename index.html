@@ -45,7 +45,11 @@
   .seg{display:flex;gap:6px;margin-bottom:10px}
   .seg button{flex:1;min-height:44px;padding:10px 6px;font-size:14px;background:#fff;color:var(--txt);border:1px solid var(--line)}
   .seg button.on{background:var(--head);color:#fff;border-color:var(--head)}
-  .ov{position:fixed;inset:0;background:rgba(10,18,30,.78);display:flex;align-items:center;justify-content:center;z-index:50;color:#fff;flex-direction:column;gap:14px;text-align:center;padding:24px}
+  .ov{position:fixed;inset:0;background:rgba(10,18,30,.93);display:flex;align-items:center;justify-content:center;z-index:50;color:#fff;flex-direction:column;gap:14px;text-align:center;padding:24px}
+  .pbar{width:min(320px,80vw);height:12px;background:rgba(255,255,255,.18);border-radius:8px;overflow:hidden}
+  .pbar i{display:block;height:100%;width:0;background:var(--accent);border-radius:8px;transition:width .15s linear}
+  #ov-pct{font-size:14px;opacity:.85;min-height:18px}
+  #ov-cancel{min-height:44px;padding:10px 22px;background:transparent;color:#fff;border:1px solid rgba(255,255,255,.5)}
   .spin{width:42px;height:42px;border:5px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;animation:sp 1s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
 </style>
@@ -167,13 +171,15 @@
   <p class="foot">Foto&nbsp;to&nbsp;DXF · läuft offline im Browser · DXF R12 für Xilog&nbsp;Maestro</p>
 </main>
 
-<div id="overlay" class="ov hide"><div class="spin"></div><div id="ov-text">Bitte warten …</div></div>
+<div id="overlay" class="ov hide"><div class="spin"></div><div id="ov-text">Bitte warten …</div>
+  <div class="pbar hide" id="ov-pbar"><i id="ov-pfill"></i></div><div id="ov-pct"></div>
+  <button id="ov-cancel" class="hide" type="button">Abbrechen</button></div>
 
 <!-- Bibliotheken: OpenCV.js (Bildverarbeitung) + QR-Code -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script>window.Module={onRuntimeInitialized(){window.cvReady=true;}};</script>
 <script async src="https://docs.opencv.org/4.10.0/opencv.js" onload="window.cvScriptLoaded=true"></script>
-<script src="geom.js?v=0.4.0"></script>
-<script src="app.js?v=0.4.0"></script>
+<script src="geom.js?v=0.4.1"></script>
+<script src="app.js?v=0.4.1"></script>
 </body>
 </html>

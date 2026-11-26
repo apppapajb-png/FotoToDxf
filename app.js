@@ -2,7 +2,7 @@
    Nutzt OpenCV.js für Schwelle + Konturen und geom.js für Linien/Bögen + DXF. */
 (function () {
   'use strict';
-  const APP_VER = '0.4.0';
+  const APP_VER = '0.4.1';
   const $ = s => document.querySelector(s);
   const G = window.Geom;
   const FP = { tol: 0.2, minr: 1.0, maxr: 5000, smooth: 0.6, minArea: 50 };
@@ -310,44 +310,77 @@
   // =========================================================
   //  Foto -> Konturen (OpenCV: Schwelle + Konturen; Homographie -> mm)
   // =========================================================
-  function runPhoto() {
-    overlay(true, 'Entzerren & erkennen …');
-    setTimeout(() => {
-      try { doPhoto(); }
-      catch (e) { console.error(e); alert('Erkennung fehlgeschlagen:\n' + e.message); overlay(false); }
-    }, 60);
+  // ---------- Fortschritt ----------
+  let busyCancel = false;
+  const tick = () => new Promise(r => setTimeout(r, 0));
+  let lastYield = 0;
+  // kurz an den Browser abgeben, damit Anzeige + Balken aktualisiert werden (höchstens alle ~40 ms)
+  async function breathe(force) { const t = performance.now(); if (force || t - lastYield > 40) { lastYield = performance.now(); await tick(); } if (busyCancel) throw new Error('__cancel__'); }
+  function progress(pct, text) {
+    $('#ov-pbar').classList.remove('hide'); $('#ov-cancel').classList.remove('hide');
+    $('#ov-pfill').style.width = Math.max(0, Math.min(100, pct)).toFixed(1) + '%';
+    $('#ov-pct').textContent = Math.round(pct) + ' %';
+    if (text) $('#ov-text').textContent = text;
   }
-  function doPhoto() {
+  function progressOff() { $('#ov-pbar').classList.add('hide'); $('#ov-cancel').classList.add('hide'); $('#ov-pct').textContent = ''; $('#ov-pfill').style.width = '0'; }
+  $('#ov-cancel').onclick = () => { busyCancel = true; $('#ov-text').textContent = 'Wird abgebrochen …'; };
+  async function runBusy(job, failMsg) {
+    busyCancel = false; overlay(true, 'Bitte warten …'); progress(0);
+    await new Promise(r => requestAnimationFrame(() => setTimeout(r, 30))); // Anzeige erst zeichnen lassen
+    try { await job(); }
+    catch (e) { if (e && e.message === '__cancel__') { /* abgebrochen */ } else { console.error(e); alert(failMsg + '\n' + (e && e.message)); } }
+    finally { progressOff(); overlay(false); busyCancel = false; }
+  }
+
+  function runPhoto() { runBusy(doPhoto, 'Erkennung fehlgeschlagen:'); }
+  async function doPhoto() {
+    const T0 = performance.now();
     const W = parseFloat($('#a4w').value) || 210, H = parseFloat($('#a4h').value) || 297;
-    const src = cv.imread(imgCanvas);
-    const gray = new cv.Mat(); cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-    const k = Math.max(3, (Math.round(Math.min(src.cols, src.rows) * 0.004) | 1));
-    cv.GaussianBlur(gray, gray, new cv.Size(k, k), 0);
-    const bin = new cv.Mat();
-    cv.threshold(gray, bin, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-    // Polarität: Rand = Hintergrund
-    const border = [];
-    for (let x = 0; x < bin.cols; x += Math.max(1, bin.cols >> 6)) { border.push(bin.ucharPtr(0, x)[0]); border.push(bin.ucharPtr(bin.rows - 1, x)[0]); }
-    const brightBorder = border.reduce((s, v) => s + (v > 127 ? 1 : 0), 0) / border.length;
-    const objBright = brightBorder < 0.5;
-    if (!objBright) cv.bitwise_not(bin, bin);
-    const m = cv.Mat.ones(5, 5, cv.CV_8U);
-    cv.morphologyEx(bin, bin, cv.MORPH_OPEN, m);
-    cv.morphologyEx(bin, bin, cv.MORPH_CLOSE, m);
+    progress(2, 'Bild vorbereiten …'); await breathe(true);
 
-    const contours = new cv.MatVector(); const hier = new cv.Mat();
-    cv.findContours(bin, contours, hier, cv.RETR_CCOMP, cv.CHAIN_APPROX_NONE);
+    // --- 1) OpenCV: Schwelle + Konturen (alles in JS-Arrays kopieren, Mats sofort freigeben) ---
+    let rawPx = [], Md;
+    {
+      const src = cv.imread(imgCanvas);
+      const gray = new cv.Mat(); cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+      const k = Math.max(3, (Math.round(Math.min(src.cols, src.rows) * 0.004) | 1));
+      cv.GaussianBlur(gray, gray, new cv.Size(k, k), 0);
+      const bin = new cv.Mat();
+      cv.threshold(gray, bin, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+      // Polarität: Rand = Hintergrund
+      const border = [];
+      for (let x = 0; x < bin.cols; x += Math.max(1, bin.cols >> 6)) { border.push(bin.ucharPtr(0, x)[0]); border.push(bin.ucharPtr(bin.rows - 1, x)[0]); }
+      const brightBorder = border.reduce((s, v) => s + (v > 127 ? 1 : 0), 0) / border.length;
+      if (!(brightBorder < 0.5)) cv.bitwise_not(bin, bin);
+      const m = cv.Mat.ones(5, 5, cv.CV_8U);
+      cv.morphologyEx(bin, bin, cv.MORPH_OPEN, m);
+      cv.morphologyEx(bin, bin, cv.MORPH_CLOSE, m);
+      src.delete(); gray.delete(); m.delete();
+      progress(10, 'Konturen suchen …'); await breathe(true);
 
-    // Homographie Bild-px -> A4-Ebene (mm, y nach unten)
-    const q = orderQuad(pickPts.map(p => p.slice()));
-    const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [q[0][0], q[0][1], q[1][0], q[1][1], q[2][0], q[2][1], q[3][0], q[3][1]]);
-    const dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, W, 0, W, H, 0, H]);
-    const M = cv.getPerspectiveTransform(srcTri, dstTri);
-    const Md = M.data64F.slice();
-    const toMM = (x, y) => { const d = Md[6] * x + Md[7] * y + Md[8]; return [(Md[0] * x + Md[1] * y + Md[2]) / d, (Md[3] * x + Md[4] * y + Md[5]) / d]; };
+      const contours = new cv.MatVector(); const hier = new cv.Mat();
+      cv.findContours(bin, contours, hier, cv.RETR_CCOMP, cv.CHAIN_APPROX_NONE);
+      bin.delete(); hier.delete();
+      for (let i = 0; i < contours.size(); i++) { const c = contours.get(i); if (c.data32S.length >= 16) rawPx.push(Int32Array.from(c.data32S)); c.delete(); }
+      contours.delete();
 
-    // Konturen einsammeln (A4-Rechteck selbst überspringen)
-    const raw = [];
+      // Homographie Bild-px -> Referenz-Ebene (mm, y nach unten)
+      const q = orderQuad(pickPts.map(p => p.slice()));
+      const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [q[0][0], q[0][1], q[1][0], q[1][1], q[2][0], q[2][1], q[3][0], q[3][1]]);
+      const dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, W, 0, W, H, 0, H]);
+      const M = cv.getPerspectiveTransform(srcTri, dstTri);
+      Md = M.data64F.slice();
+      srcTri.delete(); dstTri.delete(); M.delete();
+    }
+    const T1 = performance.now();
+    // Vorzeichen des Nenners im Blatt (Mitte) – Punkte "hinter dem Horizont" der Entzerrung sind unbrauchbar
+    const den = (x, y) => Md[6] * x + Md[7] * y + Md[8];
+    const qc = pickPts.reduce((a, p) => [a[0] + p[0] / 4, a[1] + p[1] / 4], [0, 0]);
+    const dSign = Math.sign(den(qc[0], qc[1])) || 1;
+    const MAX_LEN = 20 * (W + H) + 2000; // Konturen, die nach Entzerrung absurd lang wären (Tischkanten am Bildrand …), überspringen
+
+    // --- 2) Konturen filtern + in mm umrechnen ---
+    progress(18, 'Konturen prüfen (' + rawPx.length + ') …'); await breathe(true);
     const inPoly = (pt, Q) => { let ins = false; for (let a = 0, b = Q.length - 1; a < Q.length; b = a++) { if (((Q[a][1] > pt[1]) !== (Q[b][1] > pt[1])) && (pt[0] < (Q[b][0] - Q[a][0]) * (pt[1] - Q[a][1]) / (Q[b][1] - Q[a][1]) + Q[a][0])) ins = !ins; } return ins; };
     // Kontur liegt im gewählten Bereich (Fenster/Lasso)? -> mind. 85 % ihrer Punkte innerhalb
     const inRegion = (d, n) => {
@@ -356,49 +389,69 @@
       for (let j = 0; j < n; j += step) { tot++; if (inPoly([d[2 * j], d[2 * j + 1]], region)) ins++; }
       return ins >= 0.85 * tot;
     };
-    for (let i = 0; i < contours.size(); i++) {
-      const cnt = contours.get(i);
-      const nPts = cnt.data32S.length / 2;
-      if (nPts < 8 || !inRegion(cnt.data32S, nPts)) { cnt.delete(); continue; }
-      const P = [];
-      for (let j = 0; j < nPts; j++) P.push(toMM(cnt.data32S[2 * j], cnt.data32S[2 * j + 1]));
-      cnt.delete();
-      // Fläche in mm²
-      let area = 0; for (let j = 0; j < P.length; j++) { const a = P[j], b = P[(j + 1) % P.length]; area += a[0] * b[1] - b[0] * a[1]; }
+    const raw = [];
+    let skippedFar = 0;
+    for (let i = 0; i < rawPx.length; i++) {
+      const d = rawPx[i], nPts = d.length / 2;
+      if (!inRegion(d, nPts)) continue;
+      const P = new Array(nPts); let bad = false, len = 0;
+      for (let j = 0; j < nPts; j++) {
+        const x = d[2 * j], y = d[2 * j + 1], dd = den(x, y);
+        if (dd * dSign <= 1e-9) { bad = true; break; }
+        P[j] = [(Md[0] * x + Md[1] * y + Md[2]) / dd, (Md[3] * x + Md[4] * y + Md[5]) / dd];
+        if (j) { len += Math.hypot(P[j][0] - P[j - 1][0], P[j][1] - P[j - 1][1]); if (len > MAX_LEN) { bad = true; break; } }
+      }
+      if (bad) { skippedFar++; continue; }
+      // Fläche in mm² + Begrenzungsrechteck
+      let area = 0, x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+      for (let j = 0; j < nPts; j++) { const a = P[j], b = P[(j + 1) % nPts]; area += a[0] * b[1] - b[0] * a[1]; if (a[0] < x0) x0 = a[0]; if (a[0] > x1) x1 = a[0]; if (a[1] < y0) y0 = a[1]; if (a[1] > y1) y1 = a[1]; }
       area = Math.abs(area) / 2;
       if (area < FP.minArea) continue;
-      // A4-Blatt? (bbox ~ 0..W, 0..H)
-      let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
-      for (const p of P) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); }
-      const isA4 = Math.abs(x0) < 6 && Math.abs(y0) < 6 && Math.abs(x1 - W) < 6 && Math.abs(y1 - H) < 6;
-      if (isA4) continue;
-      raw.push({ P, outer: true });
+      // Referenz-Blatt selbst? (bbox ~ 0..W, 0..H)
+      if (Math.abs(x0) < 6 && Math.abs(y0) < 6 && Math.abs(x1 - W) < 6 && Math.abs(y1 - H) < 6) continue;
+      raw.push({ P, outer: true, bb: [x0, y0, x1, y1], len });
+      if ((i & 15) === 0) { progress(18 + 12 * i / rawPx.length); await breathe(); }
     }
+    rawPx = null;
+
     // Außen/Innen über Verschachtelung bestimmen (nicht über OpenCV-Hierarchie:
     // dort ist das weiße A4-Blatt die äußere Ebene und die Schablone nur ein „Loch“ darin).
-    for (const r of raw) { let depth = 0; for (const o of raw) if (o !== r && inPoly(r.P[0], o.P)) depth++; r.outer = depth % 2 === 0; }
-    src.delete(); gray.delete(); bin.delete(); m.delete(); contours.delete(); hier.delete();
-    srcTri.delete(); dstTri.delete(); M.delete();
+    // Schnelltest über Begrenzungsrechtecke, damit es auch bei vielen Konturen flott bleibt.
+    progress(30, 'Außen- und Innenkonturen …'); await breathe(true);
+    for (let i = 0; i < raw.length; i++) {
+      const r = raw[i], p0 = r.P[0]; let depth = 0;
+      for (const o of raw) { if (o === r) continue; const b = o.bb; if (p0[0] < b[0] || p0[0] > b[2] || p0[1] < b[1] || p0[1] > b[3]) continue; if (inPoly(p0, o.P)) depth++; }
+      r.outer = depth % 2 === 0;
+      if ((i & 7) === 0) { progress(30 + 5 * i / raw.length); await breathe(); }
+    }
 
-    if (!raw.length && region) { overlay(false); alert('Im gewählten Bereich wurde keine Kontur gefunden. Bereich etwas größer ziehen (das Teil muss ganz drin liegen) oder „✕ Bereich löschen“.'); return; }
-    if (!raw.length) { overlay(false); alert('Keine Kontur gefunden. Tipps: Schablone deutlich vom Untergrund abheben, A4‑Ecken genau setzen, gutes Licht.'); return; }
+    if (!raw.length && region) { alert('Im gewählten Bereich wurde keine Kontur gefunden. Bereich etwas größer ziehen (das Teil muss ganz drin liegen) oder „✕ Bereich löschen“.'); return; }
+    if (!raw.length) { alert('Keine Kontur gefunden. Tipps: Schablone deutlich vom Untergrund abheben, A4‑Ecken genau setzen, gutes Licht.'); return; }
 
     // y nach oben spiegeln (DXF-Konvention), in den positiven Bereich schieben
-    let maxY = -1e9, minX = 1e9, minY = 1e9;
-    for (const r of raw) for (const p of r.P) { maxY = Math.max(maxY, p[1]); minX = Math.min(minX, p[0]); minY = Math.min(minY, p[1]); }
+    let maxY = -1e9, minX = 1e9;
+    for (const r of raw) { minX = Math.min(minX, r.bb[0]); maxY = Math.max(maxY, r.bb[3]); }
     const MARGIN = 5;
-    // nur das größte Teil + dessen Innenkonturen behalten? -> wir behalten alle über Mindestfläche.
-    result = [];
-    for (const r of raw) {
-      let P = r.P.map(p => [p[0] - minX + MARGIN, (maxY - p[1]) + MARGIN]);
-      // glätten + einpassen
+
+    // --- 3) Linien + Bögen einpassen (teuerster Teil) – Fortschritt nach Konturlänge ---
+    const totalLen = raw.reduce((s, r) => s + r.len, 0) || 1;
+    let doneLen = 0;
+    const out = [];
+    for (let i = 0; i < raw.length; i++) {
+      const r = raw[i];
+      progress(35 + 63 * doneLen / totalLen, 'Linien & Bögen einpassen … (' + (i + 1) + ' / ' + raw.length + ')');
+      await breathe();
+      const P = r.P.map(p => [p[0] - minX + MARGIN, (maxY - p[1]) + MARGIN]);
       const dense = G.densify(P, 0.5, true);
       const rs = resampleClosedSmooth(dense, FP.smooth);
       const els = G.fitContour(rs, FP.tol, FP.minr, FP.maxr, true);
-      if (els && els.length) result.push({ els, outer: r.outer, closed: true, P: G.sampleChain(els) });
+      if (els && els.length) out.push({ els, outer: r.outer, closed: true, P: G.sampleChain(els) });
+      doneLen += r.len;
     }
-    overlay(false);
-    if (!result.length) { alert('Keine verwertbare Kontur.'); return; }
+    progress(100, 'Fertig'); await breathe(true);
+    console.log('Erkennung: OpenCV ' + Math.round(T1 - T0) + ' ms, gesamt ' + Math.round(performance.now() - T0) + ' ms, ' + raw.length + ' Konturen' + (skippedFar ? ', ' + skippedFar + ' außerhalb übersprungen' : ''));
+    if (!out.length) { alert('Keine verwertbare Kontur.'); return; }
+    result = out;
     showResult('Foto erkannt: ' + result.length + ' Kontur(en)' + (region ? ' im gewählten Bereich' : '') + '.');
   }
   function resampleClosedSmooth(P, smoothMm) {
@@ -481,17 +534,23 @@
     if (!result.length) return;
     const smoothMm = parseFloat(prompt('Glättung in mm (z. B. 1):', '1')); if (!(smoothMm >= 0)) return;
     const R = parseFloat(prompt('Eckenradius in mm (0 = nicht runden):', '0')) || 0;
-    overlay(true, 'Verschönern …');
-    const t0 = Date.now();
-    setTimeout(() => {
-      let done = 0;
-      for (const k of result) {
-        if (!k.els.length || k.els[0].t === 'C') continue;
-        try { const nb = G.beautifyContour(k.els, k.closed, smoothMm, R, FP); if (nb) { k.els = nb; k.P = G.sampleChain(nb); done++; } } catch (e) { console.error(e); }
+    runBusy(async () => {
+      const t0 = Date.now(); let done = 0;
+      const todo = result.filter(k => k.els.length && k.els[0].t !== 'C');
+      const work = result.map(k => ({ k, els: k.els, P: k.P })); // erst am Ende übernehmen (Abbrechen = nichts geändert)
+      for (let i = 0; i < work.length; i++) {
+        const w = work[i];
+        if (!w.els.length || w.els[0].t === 'C') continue;
+        progress(100 * done / Math.max(1, todo.length), 'Verschönern … (' + (done + 1) + ' / ' + todo.length + ')'); await breathe();
+        try { const nb = G.beautifyContour(w.els, w.k.closed, smoothMm, R, FP); if (nb) { w.els = nb; w.P = G.sampleChain(nb); } } catch (e) { console.error(e); }
+        done++;
       }
-      const rest = Math.max(0, 450 - (Date.now() - t0));
-      setTimeout(() => { overlay(false); drawResult(); const inf = count(result); setStatus($('#res-status'), 'Verschönert (' + done + ' Konturen). ' + inf.lines + ' Geraden, ' + inf.arcs + ' Bögen, ' + inf.circles + ' Kreise.'); }, rest);
-    }, 40);
+      progress(100, 'Fertig'); await breathe(true);
+      for (const w of work) { w.k.els = w.els; w.k.P = w.P; }
+      const rest = Math.max(0, 300 - (Date.now() - t0)); if (rest) await new Promise(r => setTimeout(r, rest));
+      drawResult(); const inf = count(result);
+      setStatus($('#res-status'), 'Verschönert (' + done + ' Konturen). ' + inf.lines + ' Geraden, ' + inf.arcs + ' Bögen, ' + inf.circles + ' Kreise.');
+    }, 'Verschönern fehlgeschlagen:');
   };
 
   // ---------- DXF speichern ----------
